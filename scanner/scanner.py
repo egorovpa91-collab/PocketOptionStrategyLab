@@ -28,7 +28,7 @@ class Scanner:
         print("✓ Scanner запущен")
         print("Ожидаем свечи Pocket Option...")
 
-        async for message in self.client.receive():
+        async for message in self.client.events():
             if message.get("method") != "Network.webSocketFrameReceived":
                 continue
 
