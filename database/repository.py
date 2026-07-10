@@ -25,6 +25,21 @@ def save_candle(
 ):
     session = get_session()
 
+    exists = (
+        session.query(Candle)
+        .filter(
+            Candle.asset == asset,
+            Candle.timeframe == timeframe,
+            Candle.timestamp == timestamp,
+        )
+        .first()
+    )
+
+    if exists:
+        session.close()
+        return False
+
+
     candle = Candle(
         asset=asset,
         timeframe=timeframe,
@@ -39,6 +54,8 @@ def save_candle(
     session.add(candle)
     session.commit()
     session.close()
+
+    return True
 
 
 def get_last_candles(asset, timeframe=60, limit=500):
