@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 
@@ -7,188 +8,466 @@ from .websocket import CDPClient
 
 
 class SubscriptionManager:
-    """Управляет подписками Pocket Option на рыночные активы."""
+    """Управление переключением активов Pocket Option."""
 
     def __init__(
         self,
         client: CDPClient,
         period: int = 60,
-        history_seconds: int = 9_000,
+        history_seconds: int = 9000,
     ) -> None:
-        """
-        Инициализирует менеджер подписок.
 
-        Args:
-            client: Активное CDP-соединение с вкладкой Pocket Option.
-            period: Период свечи в секундах.
-            history_seconds: Глубина запрашиваемой истории в секундах.
-        """
         self.client = client
         self.period = period
         self.history_seconds = history_seconds
+
         self.current_asset: str | None = None
+
 
     async def install_websocket_interceptor(self) -> None:
         """
-        Устанавливает перехватчик WebSocket в страницу Pocket Option.
-
-        Перехватчик сохраняет рыночное WebSocket-соединение
-        в переменной window.__po_ws.
+        Устанавливает перехватчик WebSocket.
         """
+
         script = """
         (() => {
-            if (window.__po_interceptor_installed) {
+
+            if (window.__po_interceptor_installed)
                 return "already-installed";
-            }
+
 
             window.__po_interceptor_installed = true;
 
+
             const OriginalWebSocket = window.WebSocket;
 
+
             window.WebSocket = function(url, protocols) {
-                const socket = protocols === undefined
-                    ? new OriginalWebSocket(url)
-                    : new OriginalWebSocket(url, protocols);
+
+                const ws = protocols
+                    ? new OriginalWebSocket(url, protocols)
+                    : new OriginalWebSocket(url);
+
 
                 if (
                     typeof url === "string"
-                    && url.includes("po.market")
-                    && url.includes("api")
+                    &&
+                    url.includes("po.market")
+                    &&
+                    url.includes("api")
                 ) {
-                    window.__po_ws = socket;
+
+                    window.__po_ws = ws;
+
+                    console.log(
+                        "PO market websocket captured"
+                    );
                 }
 
-                return socket;
+
+                return ws;
             };
 
-            window.WebSocket.prototype = OriginalWebSocket.prototype;
 
-            Object.defineProperties(
-                window.WebSocket,
-                {
-                    CONNECTING: { value: OriginalWebSocket.CONNECTING },
-                    OPEN: { value: OriginalWebSocket.OPEN },
-                    CLOSING: { value: OriginalWebSocket.CLOSING },
-                    CLOSED: { value: OriginalWebSocket.CLOSED },
-                },
-            );
+            window.WebSocket.prototype =
+                OriginalWebSocket.prototype;
+
 
             return "installed";
+
         })();
         """
 
+
         await self.client.send(
             "Page.addScriptToEvaluateOnNewDocument",
-            {"source": script},
+            {
+                "source": script
+            }
         )
 
+
     async def reload_page(self) -> None:
-        """Перезагружает страницу для активации WebSocket-перехватчика."""
-        await self.client.send("Page.reload")
-
-    async def subscribe(self, asset: str) -> None:
         """
-        Переключает Pocket Option на указанный актив и запрашивает историю.
-
-        Args:
-            asset: Идентификатор актива, например EURUSD_otc.
+        Перезагрузка Pocket Option.
         """
+
+        await self.client.send(
+            "Page.reload"
+        )
+
+
+
+    async def wait_for_socket(
+        self,
+        timeout: int = 30,
+    ) -> bool:
+        """
+        Ожидание открытого управляющего WebSocket.
+        """
+
+
+        script = """
+
+        (() => {
+
+            if (
+                window.__po_ws
+                &&
+                window.__po_ws.readyState
+                ===
+                WebSocket.OPEN
+            ) {
+
+                return true;
+
+            }
+
+
+            return false;
+
+
+        })();
+
+        """
+
+
+        start = time.time()
+
+
+        while time.time() - start < timeout:
+
+
+            result = await self.client.send(
+                "Runtime.evaluate",
+                {
+                    "expression": script,
+                    "returnByValue": True,
+                }
+            )
+
+
+            value = (
+                result
+                .get("result", {})
+                .get("result", {})
+                .get("value")
+            )
+
+
+            if value:
+
+                print(
+                    "✓ Управляющий WebSocket готов"
+                )
+
+                return True
+
+
+            await asyncio.sleep(1)
+
+
+
+        print(
+            "⚠ Управляющий WebSocket не найден"
+        )
+
+
+        return False
+
+
+
+    async def subscribe(
+        self,
+        asset: str,
+    ) -> None:
+        """
+        Переключение актива.
+        """
+
+
+        ready = await self.wait_for_socket()
+
+
+        if not ready:
+
+            print(
+                "⚠ Нет рабочего WebSocket"
+            )
+
+            return
+
+
+
         normalized_asset = asset.strip()
 
-        if not normalized_asset:
-            raise ValueError("Название актива не может быть пустым")
 
-        timestamp = int(time.time())
-        history_start = timestamp - self.history_seconds
+
+        timestamp = int(
+            time.time()
+        )
+
+
+        history_start = (
+            timestamp -
+            self.history_seconds
+        )
+
+
 
         messages = [
+
             (
                 '42["changeSymbol",'
                 f'{{"asset":"{normalized_asset}",'
                 f'"period":{self.period}}}]'
             ),
-            f'42["subfor","{normalized_asset}"]',
+
+
+            (
+                f'42["subfor","{normalized_asset}"]'
+            ),
+
+
             (
                 '42["loadHistoryPeriod",'
-                f'{{"asset":"{normalized_asset}",'
-                f'"index":{self._build_history_index(timestamp)},'
+                f'{{'
+                f'"asset":"{normalized_asset}",'
+                f'"index":{self._history_index(timestamp)},'
                 f'"time":{history_start},'
                 f'"offset":{self.history_seconds},'
-                f'"period":{self.period}}}]'
-            ),
+                f'"period":{self.period}'
+                f'}}]'
+            )
+
         ]
 
-        expression = self._build_send_expression(messages)
 
-        await self.client.send(
+
+        expression = (
+            self._build_js_send(
+                messages
+            )
+        )
+
+
+
+        result = await self.client.send(
             "Runtime.evaluate",
             {
                 "expression": expression,
                 "returnByValue": True,
-                "awaitPromise": True,
-            },
+            }
         )
+
+
+        print(
+            "Ответ JS переключения:",
+            result
+        )
+
+
 
         self.current_asset = normalized_asset
 
+
         print(
-            f"→ Подписка: {normalized_asset} | "
-            f"период: {self.period} сек."
+            f"→ Подписка: {normalized_asset}"
         )
 
-    @staticmethod
-    def _build_history_index(timestamp: int) -> int:
-        """
-        Создаёт индекс запроса истории в формате рабочего прототипа.
 
-        В тестовом сборщике к Unix-времени добавлялась строка «53».
-        Сохраняем это поведение до проверки точного назначения поля index.
+
+        await asyncio.sleep(2)
+
+
+
+        current = await self.get_current_asset()
+
+
+
+        print(
+            "Текущий актив на странице:",
+            current
+        )
+
+
+
+    async def get_current_asset(self):
         """
-        return int(f"{timestamp}53")
+        Получает текущий актив из интерфейса.
+        """
+
+
+        script = """
+
+        (() => {
+
+            let result = [];
+
+
+            document
+            .querySelectorAll("span")
+            .forEach(
+                e => {
+
+                    const text =
+                        e.innerText;
+
+
+                    if (
+                        text
+                        &&
+                        text.includes("/")
+                    ) {
+
+                        result.push(
+                            text.trim()
+                        );
+
+                    }
+
+                }
+            );
+
+
+            return result.slice(0,20);
+
+
+        })();
+
+        """
+
+
+
+        response = await self.client.send(
+            "Runtime.evaluate",
+            {
+                "expression": script,
+                "returnByValue": True,
+            }
+        )
+
+
+
+        return (
+            response
+            .get("result", {})
+            .get("result", {})
+            .get("value")
+        )
+
+
 
     @staticmethod
-    def _build_send_expression(messages: list[str]) -> str:
-        """Создаёт JavaScript для отправки команд через WebSocket страницы."""
-        serialized_messages = json.dumps(
+    def _history_index(
+        timestamp: int,
+    ) -> int:
+
+        return int(
+            f"{timestamp}53"
+        )
+
+
+
+    @staticmethod
+    def _build_js_send(
+        messages: list[str],
+    ) -> str:
+        """
+        JavaScript отправки команд.
+        """
+
+
+        data = json.dumps(
             messages,
             ensure_ascii=False,
         )
 
+
+
         return f"""
+
         (() => {{
+
             try {{
-                const socket = window.__po_ws;
 
-                if (!socket) {{
+                const ws =
+                    window.__po_ws;
+
+
+                if (!ws) {{
+
                     return {{
-                        ok: false,
-                        reason: "websocket-not-found"
+
+                        ok:false,
+
+                        error:
+                        "websocket-not-found"
+
                     }};
+
                 }}
 
-                if (socket.readyState !== WebSocket.OPEN) {{
+
+
+                if (
+                    ws.readyState
+                    !==
+                    WebSocket.OPEN
+                ) {{
+
                     return {{
-                        ok: false,
-                        reason: "websocket-not-open",
-                        readyState: socket.readyState
+
+                        ok:false,
+
+                        error:
+                        "websocket-not-open",
+
+                        state:
+                        ws.readyState
+
                     }};
+
                 }}
 
-                const messages = {serialized_messages};
 
-                for (const message of messages) {{
-                    socket.send(message);
-                }}
+
+                const messages =
+                    {data};
+
+
+
+                messages.forEach(
+                    m => ws.send(m)
+                );
+
+
 
                 return {{
-                    ok: true,
-                    sent: messages.length
+
+                    ok:true,
+
+                    sent:
+                    messages.length
+
                 }};
-            }} catch (error) {{
-                return {{
-                    ok: false,
-                    reason: String(error)
-                }};
+
+
+
             }}
+            catch(e) {{
+
+                return {{
+
+                    ok:false,
+
+                    error:
+                    String(e)
+
+                }};
+
+            }}
+
         }})();
+
         """
