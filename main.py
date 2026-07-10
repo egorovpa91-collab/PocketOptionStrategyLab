@@ -38,14 +38,13 @@ async def run_application() -> None:
         print("\nПолучена команда остановки.")
 
     finally:
-        print("\nЗавершение работы...")
+     print("\nЗавершение работы...")
 
-        if scanner is not None:
-            await scanner.client.close()
+    if scanner is not None:
+        await scanner.stop()
+        await scanner.client.close()
 
-        connection.close_browser()
-
-        print("✓ Программа завершена корректно")
+    print("✓ Программа завершена корректно")
 
 
 def main() -> None:
