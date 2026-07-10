@@ -25,3 +25,5 @@ logs/
 config.local.py
 
 Структура проекта/
+# Browser
+browser_profile/
