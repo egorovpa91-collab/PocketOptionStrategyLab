@@ -3,8 +3,26 @@ import asyncio
 from candle_manager import CandleManager
 from config import BRAVE_PATH, CDP_PORT
 from database.repository import create_database
+from indicator_engine import IndicatorEngine, IndicatorRegistry
+from indicator_engine.indicators import (
+    ClosePriceIndicator,
+    EMAIndicator,
+)
 from scanner import Scanner
 from scanner.connection import PocketConnection
+
+
+EMA_PERIODS = (
+    5,
+    8,
+    10,
+    13,
+    20,
+    30,
+    50,
+    100,
+    200,
+)
 
 
 async def run_application() -> None:
@@ -15,7 +33,21 @@ async def run_application() -> None:
         port=CDP_PORT,
     )
     scanner: Scanner | None = None
+
     candle_manager = CandleManager(history_limit=500)
+
+    indicator_registry = IndicatorRegistry()
+    indicator_registry.register(ClosePriceIndicator())
+
+    for period in EMA_PERIODS:
+        indicator_registry.register(
+            EMAIndicator(period=period)
+        )
+
+    indicator_engine = IndicatorEngine(
+        candle_manager=candle_manager,
+        registry=indicator_registry,
+    )
 
     try:
         print("=" * 60)
@@ -35,11 +67,22 @@ async def run_application() -> None:
             return
 
         scanner = Scanner(websocket_url)
+
+        # Порядок подписки важен:
+        # сначала Candle Manager обновляет закрытую историю,
+        # затем Indicator Engine рассчитывает снимок.
         scanner.events.subscribe_new_closed_candle(
             candle_manager.handle_new_closed_candle
         )
+        scanner.events.subscribe_new_closed_candle(
+            indicator_engine.handle_new_closed_candle
+        )
 
         print("✓ Candle Manager подписан на new_closed_candle")
+        print(
+            "✓ Indicator Engine подписан на new_closed_candle "
+            f"| индикаторов: {len(indicator_registry)}"
+        )
 
         await scanner.start()
 
@@ -53,6 +96,7 @@ async def run_application() -> None:
             await scanner.client.close()
 
         candle_manager.print_summary()
+        indicator_engine.print_summary()
         print("✓ Программа завершена корректно")
 
 
