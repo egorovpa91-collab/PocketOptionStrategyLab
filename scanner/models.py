@@ -7,7 +7,6 @@ class Candle:
 
     asset: str
     time: int
-
     open: float
     high: float
     low: float
@@ -20,5 +19,4 @@ class MarketData:
 
     asset: str
     source: str
-
     candles: list[Candle]
