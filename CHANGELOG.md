@@ -1,5 +1,13 @@
 # CHANGELOG
 
+## v0.3.1 — Цикл из 6 активов
+
+- Список Scanner сокращён с 9 до 6 согласованных активов.
+- Удалены `GBPJPY_otc`, `AUDCAD_otc` и `EURRUB_otc`.
+- При интервале 10 секунд полный цикл теперь занимает около 60 секунд.
+- Механизмы CDP, переключения, фильтрации, UPSERT и Candle Manager не изменялись.
+- Обновлены PROJECT.md, ROADMAP.md, IDEAS.md и CHANGELOG.md.
+
 ## v0.3.0 — Candle Manager
 
 - Добавлен модуль `candle_manager`.

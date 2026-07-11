@@ -21,9 +21,6 @@ DEFAULT_ASSETS = [
     "AUDUSD_otc",
     "USDJPY_otc",
     "EURGBP_otc",
-    "GBPJPY_otc",
-    "AUDCAD_otc",
-    "EURRUB_otc",
     "USDCHF_otc",
 ]
 
@@ -450,7 +447,7 @@ class Scanner:
     async def _subscription_loop(
         self,
     ) -> None:
-        """Переключает девять активов по кругу."""
+        """Переключает настроенные активы по кругу."""
 
         try:
             await self.market_ready.wait()
